@@ -1,0 +1,382 @@
+
+* unweighted balance table
+
+clear all
+set more off
+
+use "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_panel_site_level_v2.dta", clear
+
+global balance_vars ///
+    avg_subsistence_base ///
+    ag_extension_base ///
+    road_type_A_base ///
+    road_type_D_base ///
+    hired_labor_s1_base ///
+    hired_labor_s2_base ///
+    non_agriculture_enterprise_avg_b ///
+    electricity_access_avg_base ///
+    rain_mm_s1_2000_2010 ///
+    rain_mm_s2_2000_2010 ///
+    temp_s1_2000_2010 ///
+    temp_s2_2000_2010 ///
+    popdens_2010 ///
+    popdens_trend_2000_2010 ///
+    dist_major_town_km ///
+    elev_mean_30km ///
+    elev_sd_30km ///
+    cropland_10_share_2010 ///
+    poverty_mean_2010
+	
+tempname results
+
+postfile `results' ///
+    str60 variable ///
+    candidate_mean ///
+    csb_mean ///
+    normdiff ///
+    n_candidate ///
+    n_csb ///
+    using "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_table_unweighted_stata.dta", replace
+
+foreach x of global balance_vars {
+
+    * Candidate mean and variance
+    quietly summarize `x' if treated == 0
+    local mc = r(mean)
+    local vc = r(Var)
+    local nc = r(N)
+
+    * CSB mean and variance
+    quietly summarize `x' if treated == 1
+    local mt = r(mean)
+    local vt = r(Var)
+    local nt = r(N)
+
+    * Normalized difference: CSB minus candidate
+    local nd = (`mt' - `mc') / sqrt((`vt' + `vc') / 2)
+
+    post `results' ("`x'") (`mc') (`mt') (`nd') (`nc') (`nt')
+}
+
+postclose `results'
+
+use "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_table_unweighted_stata.dta", clear
+
+format candidate_mean csb_mean normdiff %9.4f
+list, clean
+
+export excel using ///
+    "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_table_unweighted_stata.xlsx", ///
+    firstrow(variables) replace
+
+	
+
+* weighted
+
+
+clear all
+set more off
+
+* site-level balance data
+
+use "C:\Users\Carl Dinkel\Desktop\RA Data\Covariate balance\output\balance_panel_site_level_v2.dta", clear
+
+describe
+summarize treated
+
+drop if missing(treated)
+
+* define propensity-score covariates
+
+global pscore_core ///
+    rain_mm_s1_2000_2010 ///
+    rain_mm_s2_2000_2010 ///
+    temp_s1_2000_2010 ///
+    temp_s2_2000_2010 ///
+    popdens_2010 ///
+    popdens_trend_2000_2010 ///
+    dist_major_town_km ///
+    elev_mean_30km ///
+    elev_sd_30km ///
+    cropland_10_share_2010 ///
+    poverty_mean_2010 ///
+	electricity_access_avg_base ///
+	non_agriculture_enterprise_avg_b ///
+	ag_extension_base ///
+    avg_subsistence_base
+	
+* estimation sample
+
+egen miss_pscore = rowmiss($pscore_core)
+gen pscore_sample = miss_pscore == 0 & !missing(treated)
+
+tab treated if pscore_sample == 1
+
+* 4. Logit and probit models
+
+logit treated $pscore_core if pscore_sample == 1, vce(robust)
+estimates store logit_core
+
+predict ps_logit if e(sample), pr
+
+probit treated $pscore_core if pscore_sample == 1, vce(robust)
+estimates store probit_core
+
+predict ps_probit if e(sample), pr
+
+*  marginal effects
+
+logit treated $pscore_core if pscore_sample == 1, vce(robust)
+
+margins, dydx(*) post
+estimates store logit_mfx
+
+
+* check propensity-score overlap (logit)
+
+summ ps_logit if treated == 1 & pscore_sample == 1, detail
+local min_t = r(min)
+local max_t = r(max)
+
+gen in_support = ps_logit >= `min_t' & ps_logit <= `max_t' if pscore_sample == 1
+
+tab treated in_support if pscore_sample == 1
+summ ps_logit if treated == 1 & pscore_sample == 1, detail
+summ ps_logit if treated == 0 & pscore_sample == 1, detail
+summ ps_logit if treated == 0 & in_support == 1, detail
+
+* plot
+
+twoway ///
+    (kdensity ps_logit if treated == 1 & pscore_sample == 1, lwidth(medthick)) ///
+    (kdensity ps_logit if treated == 0 & pscore_sample == 1, lpattern(dash)), ///
+    legend(order(1 "CSB sites" 2 "Candidate villages")) ///
+    xtitle("Estimated propensity score") ///
+    ytitle("Density") ///
+    title("Distribution of Propensity Scores")
+
+graph export "C:\Users\Carl Dinkel\Desktop\RA Data\Covariate balance\output\pscore_density_logit.png", replace width(2000)
+
+* check propensity-score overlap (probit)
+
+summ ps_probit if treated == 1 & pscore_sample == 1, detail
+local min_t_probit = r(min)
+local max_t_probit = r(max)
+
+gen in_support_probit = ps_probit >= `min_t_probit' & ps_probit <= `max_t_probit' ///
+    if pscore_sample == 1
+
+tab treated in_support_probit if pscore_sample == 1
+
+summ ps_probit if treated == 1 & pscore_sample == 1, detail
+summ ps_probit if treated == 0 & pscore_sample == 1, detail
+summ ps_probit if treated == 0 & in_support_probit == 1, detail
+
+*plot
+
+twoway ///
+    (kdensity ps_probit if treated == 1 & pscore_sample == 1, lwidth(medthick)) ///
+    (kdensity ps_probit if treated == 0 & pscore_sample == 1, lpattern(dash)), ///
+    legend(order(1 "CSB sites" 2 "Candidate villages")) ///
+    xtitle("Estimated propensity score") ///
+    ytitle("Density") ///
+    title("Distribution of Propensity Scores, Probit")
+
+graph export "C:\Users\Carl Dinkel\Desktop\RA Data\Covariate balance\output\pscore_density_probit.png", replace width(2000)
+
+
+* compare logit and probbit overlap
+
+tab in_support in_support_probit if pscore_sample == 1
+tab treated in_support if pscore_sample == 1
+tab treated in_support_probit if pscore_sample == 1
+
+
+* 8. inspect weighted control sample size
+
+gen att_w = .
+replace att_w = 1 if treated == 1 & pscore_sample == 1
+replace att_w = ps_logit / (1 - ps_logit) if treated == 0 & pscore_sample == 1
+
+summ att_w if treated == 0 & pscore_sample == 1, detail
+summ att_w if treated == 0 & in_support == 1, detail
+
+* effective sample size 
+
+gen att_w2 = att_w^2 if treated == 0 & in_support == 1
+
+summ att_w if treated == 0 & in_support == 1
+local sumw = r(sum)
+
+summ att_w2 if treated == 0 & in_support == 1
+local sumw2 = r(sum)
+
+display "Effective control sample size = " (`sumw'^2)/`sumw2'
+
+
+* rerun balance table, define variables here
+
+global balance_vars ///
+    avg_subsistence_base ///
+    ag_extension_base ///
+    road_type_A_base ///
+    road_type_D_base ///
+    hired_labor_s1_base ///
+    hired_labor_s2_base ///
+    non_agriculture_enterprise_avg_b ///
+    electricity_access_avg_base ///
+    rain_mm_s1_2000_2010 ///
+    rain_mm_s2_2000_2010 ///
+    temp_s1_2000_2010 ///
+    temp_s2_2000_2010 ///
+    popdens_2010 ///
+    popdens_trend_2000_2010 ///
+    dist_major_town_km ///
+    elev_mean_30km ///
+	elev_sd_30km ///
+    cropland_10_share_2010 ///
+    poverty_mean_2010 
+
+	
+* Treated: CSB sites, unweighted
+* Controls: candidates on common support, ATT weighted
+
+tempname results
+
+postfile `results' ///
+    str60 variable ///
+    control_mean ///
+    csb_mean ///
+    normdiff ///
+    n_control ///
+    n_csb ///
+    using "C:\Users\Carl Dinkel\Desktop\RA Data\Covariate balance\output\weighted_balance_results_v3.dta", replace
+
+foreach x of global balance_vars {
+
+    * CSB mean and variance
+    quietly summarize `x' if treated == 1 & pscore_sample == 1
+    local mt = r(mean)
+    local vt = r(Var)
+    local nt = r(N)
+
+    * ATT-weighted control mean and variance, common support only
+    quietly summarize `x' [aw=att_w] if treated == 0 & in_support == 1 & pscore_sample == 1
+    local mc = r(mean)
+    local vc = r(Var)
+    local nc = r(N)
+
+    * Normalized difference
+    local nd = (`mt' - `mc') / sqrt((`vt' + `vc') / 2)
+
+    post `results' ("`x'") (`mc') (`mt') (`nd') (`nc') (`nt')
+}
+
+postclose `results'
+
+use "C:\Users\Carl Dinkel\Desktop\RA Data\Covariate balance\output\weighted_balance_results_v3.dta", clear
+list, clean
+
+export excel using ///
+    "C:\Users\Carl Dinkel\Desktop\RA Data\Covariate balance\output\weighted_balance_results_v3.xlsx", ///
+    firstrow(variables) replace
+
+*** absolute  normdiff
+clear
+
+*unweighted
+use "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_table_unweighted_v3.dta", clear
+gen abs_normdiff = abs(Norm__Diff_)
+summ abs_normdiff
+local raw_sum = r(sum)
+local raw_mean = r(mean)
+
+* Weighted table
+use "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\weighted_balance_results_v3.dta", clear
+gen abs_normdiff = abs(normdiff)
+summ abs_normdiff
+local weighted_sum = r(sum)
+local weighted_mean = r(mean)
+
+display "Raw sum abs normdiff: " `raw_sum'
+display "Weighted sum abs normdiff: " `weighted_sum'
+display "Raw mean abs normdiff: " `raw_mean'
+display "Weighted mean abs normdiff: " `weighted_mean'
+
+
+*** absolute normdiff summary
+
+clear
+
+* 1. Unweighted table
+
+use "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_table_unweighted_v2.dta", clear
+
+gen abs_normdiff = abs(Norm__Diff_)
+gen imbalanced = abs_normdiff > 0.25 if !missing(abs_normdiff)
+
+summ abs_normdiff
+scalar raw_sum = r(sum)
+scalar raw_mean = r(mean)
+scalar raw_n = r(N)
+
+count if imbalanced == 1
+scalar raw_imbalanced = r(N)
+
+* 2. Weighted table
+
+use "C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\weighted_balance_results.dta", clear
+
+gen abs_normdiff = abs(normdiff)
+gen imbalanced = abs_normdiff > 0.25 if !missing(abs_normdiff)
+
+summ abs_normdiff
+scalar weighted_sum = r(sum)
+scalar weighted_mean = r(mean)
+scalar weighted_n = r(N)
+
+count if imbalanced == 1
+scalar weighted_imbalanced = r(N)
+
+
+
+* 3. Create comparison table
+
+clear
+set obs 2
+
+gen sample = ""
+replace sample = "Raw full candidate pool" in 1
+replace sample = "ATT-weighted common support" in 2
+
+gen n_variables = .
+replace n_variables = raw_n in 1
+replace n_variables = weighted_n in 2
+
+gen sum_abs_normdiff = .
+replace sum_abs_normdiff = raw_sum in 1
+replace sum_abs_normdiff = weighted_sum in 2
+
+gen mean_abs_normdiff = .
+replace mean_abs_normdiff = raw_mean in 1
+replace mean_abs_normdiff = weighted_mean in 2
+
+gen n_imbalanced = .
+replace n_imbalanced = raw_imbalanced in 1
+replace n_imbalanced = weighted_imbalanced in 2
+
+gen share_imbalanced = n_imbalanced / n_variables
+
+format sum_abs_normdiff mean_abs_normdiff share_imbalanced %9.3f
+
+list, clean
+
+
+* 4. Export
+export excel using ///
+"C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_abs_normdiff_summary.xlsx", ///
+firstrow(variables) replace
+
+save ///
+"C:\Users\Carl Dinkel\OneDrive - University of Gothenburg\RA Internship\RA Data\Covariate balance\output\balance_abs_normdiff_summary.dta", ///
+replace
