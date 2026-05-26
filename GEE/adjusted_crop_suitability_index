@@ -1,0 +1,132 @@
+var treatment = ee.FeatureCollection("projects/uganda-485412/assets/CSBXY");
+
+var gaez = ee.Image("projects/uganda-485412/assets/GAEZ_V5_IX30AS_RF");
+
+var cropNames = [
+  "ALF",
+  "BAN",
+  "BCK",
+  "BRL",
+  "BSG",
+  "CAB",
+  "CAR",
+  "CHK",
+  "CIT",
+  "COC",
+  "COF",
+  "CON",
+  "COT",
+  "COW",
+  "CSH",
+  "CST",
+  "CSV",
+  "FIML",
+  "FLX",
+  "FML",
+  "FONIO",
+  "GRD",
+  "GRM",
+  "JTR",
+  "MIS",
+  "MNG",
+  "MZE",
+  "MZS",
+  "NAP",
+  "OAT",
+  "OKRA",
+  "OLP",
+  "OLV",
+  "ONI",
+  "PEA",
+  "PHB",
+  "PIG",
+  "PML",
+  "PST",
+  "RCD",
+  "RCG",
+  "RCW",
+  "RSD",
+  "RUB",
+  "RYE",
+  "SES",
+  "SFL",
+  "SOY",
+  "SPO",
+  "SRG",
+  "SUB",
+  "SUC",
+  "SWG",
+  "TANN",
+  "TAROD",
+  "TAROW",
+  "TEA",
+  "TEF",
+  "TOB",
+  "TOM",
+  "WHE",
+  "WMEL",
+  "WPO",
+  "YAM"
+];
+
+gaez = gaez.rename(cropNames);
+
+print("Renamed GAEZ bands", gaez.bandNames());
+
+
+var idField = "CSB";
+
+var treatmentBuffers = treatment.map(function(f) {
+  return f.buffer(30000); 
+});
+
+
+// Recode GAEZ suitability classes to approximate SI score
+
+function recodeSuitability(img) {
+  var bands = img.bandNames();
+
+  var recodedBands = bands.map(function(b) {
+    b = ee.String(b);
+
+    var x = img.select(b);
+
+    var masked = x.updateMask(x.neq(9));
+
+    var recoded = masked
+      .where(masked.eq(1), 92.5)
+      .where(masked.eq(2), 77.5)
+      .where(masked.eq(3), 62.5)
+      .where(masked.eq(4), 47.5)
+      .where(masked.eq(5), 32.5)
+      .where(masked.eq(6), 17.5)
+      .where(masked.eq(7), 5)
+      .where(masked.eq(8), 0)
+      .rename(b.cat("_meanSI"));
+
+    return recoded;
+  });
+
+  return ee.ImageCollection.fromImages(recodedBands).toBands()
+    .rename(bands.map(function(b) {
+      return ee.String(b).cat("_meanSI");
+    }));
+}
+
+var gaezSI = recodeSuitability(gaez);
+
+
+var suitabilityByBuffer = gaezSI.reduceRegions({
+  collection: treatment,
+  reducer: ee.Reducer.mean(),
+  scale: 1000,
+  crs: gaez.projection(),
+  tileScale: 4
+});
+
+
+Export.table.toDrive({
+  collection: suitabilityByBuffer,
+  description: "GAEZ_crop_suitability_meanSI_30km_Rainfed_lowinput_CSB",
+  fileFormat: "CSV"
+});
