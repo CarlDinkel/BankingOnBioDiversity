@@ -1,0 +1,132 @@
+var hh = ee.FeatureCollection("projects/uganda-485412/assets/CSBXY");
+
+var temp = ee.ImageCollection("UCSB-CHG/CHIRTS/DAILY");
+
+print("First image", temp.first());
+print("Band names", temp.first().bandNames());
+
+var startYear = 2000;
+var endYear = 2010;   
+
+var years = ee.List.sequence(startYear, endYear);
+
+var seasons = ee.List([
+  ee.Dictionary({
+    season: 1,
+    startMonth: 2,
+    startDay: 1,
+    endMonth: 8,
+    endDay: 1
+  }),
+  ee.Dictionary({
+    season: 2,
+    startMonth: 8,
+    startDay: 1,
+    endMonth: 2,
+    endDay: 1
+  })
+]);
+
+var base = hh.select(["CSB"]);
+
+var baseBuffers = base.map(function(f) {
+  return f.buffer(20000); // 10 km radius
+});
+
+var yearSeasons = years.map(function(y) {
+  y = ee.Number(y);
+
+  return seasons.map(function(s) {
+    s = ee.Dictionary(s);
+
+    var season = ee.Number(s.get("season"));
+
+    var startDate = ee.Date.fromYMD(
+      y,
+      ee.Number(s.get("startMonth")),
+      ee.Number(s.get("startDay"))
+    );
+
+    var endYearSeason = ee.Algorithms.If(
+      season.eq(2),
+      y.add(1),
+      y
+    );
+
+    var endDate = ee.Date.fromYMD(
+      ee.Number(endYearSeason),
+      ee.Number(s.get("endMonth")),
+      ee.Number(s.get("endDay"))
+    );
+
+    return ee.Dictionary({
+      year: y,
+      season: season,
+      startDate: startDate,
+      endDate: endDate
+    });
+  });
+}).flatten();
+
+
+var wideTemp = ee.FeatureCollection(
+  yearSeasons.iterate(function(ys, fc) {
+    fc = ee.FeatureCollection(fc);
+    ys = ee.Dictionary(ys);
+
+    var y = ee.Number(ys.get("year"));
+    var season = ee.Number(ys.get("season"));
+    var startDate = ee.Date(ys.get("startDate"));
+    var endDate = ee.Date(ys.get("endDate"));
+
+    var colName = ee.String("temp_mean_")
+      .cat(y.format("%d"))
+      .cat("_s")
+      .cat(season.format("%d"));
+
+    // Daily mean temperature = (Tmax + Tmin) / 2
+    var t = temp
+      .filterDate(startDate, endDate)
+      .map(function(img) {
+        var tmean = img.select("maximum_temperature")
+          .add(img.select("minimum_temperature"))
+          .divide(2)
+          .rename("temp_mean");
+        return tmean.copyProperties(img, ["system:time_start"]);
+      })
+      .mean()
+      .rename("temp_mean");
+
+    var extracted = t.reduceRegions({
+      collection: fc,
+      reducer: ee.Reducer.mean(),
+      scale: 5500
+    });
+
+    extracted = extracted.map(function(f) {
+      return f
+        .set(colName, f.get("mean"))
+        .setGeometry(f.geometry());
+    });
+
+    extracted = extracted.select(
+      extracted.first().propertyNames().remove("mean")
+    );
+
+    return extracted;
+
+  }, base)
+);
+
+wideTemp = wideTemp.map(function(f) {
+  return f.setGeometry(null);
+});
+
+print("Wide seasonal temperature table", wideTemp.limit(5));
+
+Export.table.toDrive({
+  collection: wideTemp,
+  description: "CSB_20KM_seasonal_mean_temperature_CHIRTS_wide_2000_2010",
+  fileFormat: "CSV",
+  folder: "NDVI_Analysis"
+});
