@@ -35,7 +35,7 @@ Main software used:
 - Stata for the scripts in `STATA/`.
 
 Before running, replace hard-coded paths such as `C:/Users/Carl/Desktop/...` or
-`Path("/")` with the correct root folder on your machine.
+`Path("/")` with the correct root folder on your computer.
 
 ## Logic Tree
 
