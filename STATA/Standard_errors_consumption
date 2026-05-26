@@ -1,0 +1,53 @@
+import excel using "cand_cons_SE_fixed.xlsx", firstrow clear
+
+* Wave 1
+gen average_cons1 = cons1_mean
+gen SE_cons1 = cons1_stddev / sqrt(cons1_count)
+
+gen average_hhsize1 = hh_size1_mean
+gen SE_hhsize1 = hh_size1_stddev / sqrt(hh_size1_count)
+
+* Wave 2
+gen average_cons2 = cons2_mean
+gen SE_cons2 = cons2_stddev / sqrt(cons2_count)
+
+gen average_hhsize2 = hh_size2_mean
+gen SE_hhsize2 = hh_size2_stddev / sqrt(hh_size2_count)
+
+* Wave 3
+gen average_cons3 = cons3_mean
+gen SE_cons3 = cons3_stddev / sqrt(cons3_count)
+
+gen average_hhsize3 = hh_size3_mean
+gen SE_hhsize3 = hh_size3_stddev / sqrt(hh_size3_count)
+
+* Wave 4
+gen average_cons4 = cons4_mean
+gen SE_cons4 = cons4_stddev / sqrt(cons4_count)
+
+gen average_hhsize4 = hh_size4_mean
+gen SE_hhsize4 = hh_size4_stddev / sqrt(hh_size4_count)
+
+* Wave 5
+gen average_cons5 = cons5_mean
+gen SE_cons5 = cons5_stddev / sqrt(cons5_count)
+
+gen average_hhsize5 = hh_size5_mean
+gen SE_hhsize5 = hh_size5_stddev / sqrt(hh_size5_count)
+
+* Wave 7
+gen average_cons7 = cons7_mean
+gen SE_cons7 = cons7_stddev / sqrt(cons7_count)
+
+gen average_hhsize7 = hh_size7_mean
+gen SE_hhsize7 = hh_size7_stddev / sqrt(hh_size7_count)
+
+keep SeedBank ///
+    average_cons1 SE_cons1 average_hhsize1 SE_hhsize1 ///
+    average_cons2 SE_cons2 average_hhsize2 SE_hhsize2 ///
+    average_cons3 SE_cons3 average_hhsize3 SE_hhsize3 ///
+    average_cons4 SE_cons4 average_hhsize4 SE_hhsize4 ///
+    average_cons5 SE_cons5 average_hhsize5 SE_hhsize5 ///
+    average_cons7 SE_cons7 average_hhsize7 SE_hhsize7
+	
+export excel using "csb_cons_SE_fixed.xlsx", firstrow(variables) replace
