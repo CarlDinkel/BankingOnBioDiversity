@@ -1,0 +1,161 @@
+var candidates = ee.FeatureCollection("projects/uganda-485412/assets/indexed_candidate_XY");
+
+var idField = "Index";
+
+print("Candidate columns", candidates.first().propertyNames());
+print("First candidate", candidates.first());
+
+var chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY");
+
+// season_year = y
+// Season 1: Feb y - Jul y
+// Season 2: Aug y - Jan y+1
+
+var startYear = 2009;
+var endYear = 2020;
+
+var years = ee.List.sequence(startYear, endYear);
+
+
+function extractSeason(y, season) {
+  y = ee.Number(y);
+  season = ee.Number(season);
+
+  var startDate = ee.Date(
+    ee.Algorithms.If(
+      season.eq(1),
+      ee.Date.fromYMD(y, 2, 1),
+      ee.Date.fromYMD(y, 8, 1)
+    )
+  );
+
+  var endDate = ee.Date(
+    ee.Algorithms.If(
+      season.eq(1),
+      ee.Date.fromYMD(y, 8, 1),        // exclusive, so Feb-Jul
+      ee.Date.fromYMD(y.add(1), 2, 1)  // exclusive, so Aug-Jan
+    )
+  );
+
+  var rain = chirps
+    .filterDate(startDate, endDate)
+    .sum()
+    .rename("rain_season_mm");
+
+  var extracted = rain.reduceRegions({
+    collection: candidates.select([idField]),
+    reducer: ee.Reducer.mean(),
+    scale: 5000
+  });
+
+  return extracted.map(function(f) {
+    var idString = ee.Number(f.get(idField)).format("%.0f");
+
+    var statKey = idString
+      .cat("_S")
+      .cat(season.format("%.0f"));
+
+    return f.set({
+      "season_year": y,
+      "season": season,
+      "rain_season_mm": f.get("mean"),
+      "stat_key": statKey
+    }).select([
+      idField,
+      "season_year",
+      "season",
+      "rain_season_mm",
+      "stat_key"
+    ]);
+  });
+}
+
+var season1 = ee.FeatureCollection(
+  years.map(function(y) {
+    return extractSeason(y, 1);
+  })
+).flatten();
+
+var season2 = ee.FeatureCollection(
+  years.map(function(y) {
+    return extractSeason(y, 2);
+  })
+).flatten();
+
+var seasonalPanel = season1.merge(season2);
+
+print("Seasonal rainfall panel", seasonalPanel.limit(10));
+
+var groupedStats = seasonalPanel.reduceColumns({
+  selectors: ["stat_key", "rain_season_mm"],
+  reducer: ee.Reducer.mean()
+    .combine({
+      reducer2: ee.Reducer.stdDev(),
+      sharedInputs: true
+    })
+    .group({
+      groupField: 0,
+      groupName: "stat_key"
+    })
+});
+
+var statsFC = ee.FeatureCollection(
+  ee.List(groupedStats.get("groups")).map(function(g) {
+    g = ee.Dictionary(g);
+
+    return ee.Feature(null, {
+      "stat_key": g.get("stat_key"),
+      "mean_rain_c_season": g.get("mean"),
+      "sd_rain_c_season": g.get("stdDev")
+    });
+  })
+);
+
+print("Rainfall stats by candidate-season", statsFC.limit(10));
+
+
+var joined = ee.Join.saveFirst("rain_stats").apply({
+  primary: seasonalPanel,
+  secondary: statsFC,
+  condition: ee.Filter.equals({
+    leftField: "stat_key",
+    rightField: "stat_key"
+  })
+});
+
+var anomalyPanel = ee.FeatureCollection(joined).map(function(f) {
+  var stats = ee.Feature(f.get("rain_stats"));
+
+  var rain = ee.Number(f.get("rain_season_mm"));
+  var meanRain = ee.Number(stats.get("mean_rain_c_season"));
+  var sdRain = ee.Number(stats.get("sd_rain_c_season"));
+
+  var anomaly = ee.Algorithms.If(
+    sdRain.gt(0),
+    rain.subtract(meanRain).divide(sdRain),
+    null
+  );
+
+  return f.set({
+    "mean_rain_c_season": meanRain,
+    "sd_rain_c_season": sdRain,
+    "rain_anomaly": anomaly
+  }).select([
+    idField,
+    "season_year",
+    "season",
+    "rain_season_mm",
+    "mean_rain_c_season",
+    "sd_rain_c_season",
+    "rain_anomaly"
+  ]);
+});
+
+print("Final rainfall anomaly panel", anomalyPanel.limit(20));
+
+Export.table.toDrive({
+  collection: anomalyPanel,
+  description: "candidates_seasonal_rainfall_anomaly_2009_2020",
+  fileFormat: "CSV",
+  folder: "NDVI_Analysis"
+});
