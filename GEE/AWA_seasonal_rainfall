@@ -1,0 +1,110 @@
+var hh = ee.FeatureCollection("projects/uganda-485412/assets/11K_XY");
+
+var rain = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY");
+
+var startYear = 2000;
+var endYear = 2010;   
+
+var years = ee.List.sequence(startYear, endYear);
+
+var bufferSize = 20000;  //Change buffer size here, also change buffererror if you want faster/slower computation
+var bufferError = 100;  
+
+// change "geonameid" to whatever index you are working with here and also in extracted + return function at the bottom
+
+var hhBuffers = hh.select(["geonameid"]).map(function(f) {
+  return f.buffer(bufferSize, bufferError);
+});
+
+function seasonalRainTotal(y, season) {
+  y = ee.Number(y);
+  season = ee.Number(season);
+
+  var startDate = ee.Date(
+    ee.Algorithms.If(
+      season.eq(1),
+      ee.Date.fromYMD(y, 2, 1),        
+      ee.Date.fromYMD(y, 8, 1)         
+    )
+  );
+
+  var endDate = ee.Date(
+    ee.Algorithms.If(
+      season.eq(1),
+      ee.Date.fromYMD(y, 8, 1),      
+      ee.Date.fromYMD(y.add(1), 2, 1)  
+    )
+  );
+
+  return rain
+    .filterDate(startDate, endDate)
+    .select("precipitation")
+    .sum()
+    .rename("rain_total")
+    .set("year", y)
+    .set("season", season);
+}
+
+
+var meanSeason1 = ee.ImageCollection(
+  years.map(function(y) {
+    return seasonalRainTotal(y, 1);
+  })
+).mean().rename("Mean_season_1");
+
+var meanSeason2 = ee.ImageCollection(
+  years.map(function(y) {
+    return seasonalRainTotal(y, 2);
+  })
+).mean().rename("Mean_season_2");
+
+
+var area = ee.Image.pixelArea().rename("area");
+
+var s1AreaWeighted = meanSeason1
+  .multiply(area)
+  .rename("s1_rain_area");
+
+var s2AreaWeighted = meanSeason2
+  .multiply(area)
+  .rename("s2_rain_area");
+
+var weightedImage = s1AreaWeighted
+  .addBands(s2AreaWeighted)
+  .addBands(area);
+
+// Sum rainfall*area and area inside each buffer
+var extracted = weightedImage.reduceRegions({
+  collection: hhBuffers,
+  reducer: ee.Reducer.sum(),
+  scale: 500,       // finer than CHIRPS to approximate cell-buffer overlap
+  tileScale: 4
+});
+
+
+// Divide by area to get weighted means
+extracted = extracted.map(function(f) {
+  var areaSum = ee.Number(f.get("area"));
+
+  var meanS1 = ee.Number(f.get("s1_rain_area")).divide(areaSum);
+  var meanS2 = ee.Number(f.get("s2_rain_area")).divide(areaSum);
+
+  return f
+    .set("Mean_season_1", meanS1)
+    .set("Mean_season_2", meanS2)
+    .select(["hh_id_obs", "Mean_season_1", "Mean_season_2"]);
+});
+
+extracted = extracted.map(function(f) {
+  return f.setGeometry(null);
+});
+
+print("Weighted buffer mean seasonal rainfall 2000-2010", extracted.limit(5));
+
+
+Export.table.toDrive({
+  collection: extracted,
+  description: "11K_weighted_20km_mean_seasonal_rainfall_2000_2010",
+  fileFormat: "CSV",
+  folder: "Choose your folder here"
+});
