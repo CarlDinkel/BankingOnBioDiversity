@@ -1,0 +1,54 @@
+import excel using "consumption_w1_7", firstrow clear
+
+drop if wave == 8
+
+drop if missing(lat_modified) | missing(lon_modified)
+
+bysort hh_id_merge wave: egen lat_min = min(lat_modified)
+bysort hh_id_merge wave: egen lat_max = max(lat_modified)
+bysort hh_id_merge wave: egen lon_min = min(lon_modified)
+bysort hh_id_merge wave: egen lon_max = max(lon_modified)
+
+list hh_id_merge wave season lat_modified lon_modified if lat_min != lat_max | lon_min != lon_max
+
+drop lat_min lat_max lon_min lon_max
+
+bysort hh_id_obs wave: egen n_seasons = count(season)
+tab n_seasons
+
+collapse ///
+    (sum) totcons_USD ///
+    (firstnm) hh_id_merge urban lat_modified lon_modified hh_size hh_shock hh_primary_education hh_electricity_access hh_dependency_ratio hh_formal_education nonfarm_enterprise totcons_LCU cons_quint hh_asset_index HDDS, ///
+    by(hh_id_obs wave)
+		
+*totcons_USD = season 1 + season 2
+
+export excel using "totcons_USD_by_wave_XY.xlsx", firstrow(variables) replace
+
+* wide consumption by wave for GIS points layer
+
+import excel using "totcons_USD_by_wave_XY.xlsx", firstrow clear
+
+duplicates report hh_id_obs wave
+
+keep hh_id_obs wave totcons_USD hh_size lat_modified lon_modified
+
+destring wave lat_modified lon_modified totcons_USD hh_size, replace force
+
+rename totcons_USD cons
+
+sort hh_id_obs wave
+
+bysort hh_id_obs (wave): gen has_coord = !missing(lat_modified) & !missing(lon_modified)
+
+bysort hh_id_obs (wave): gen first_coord_wave = wave if has_coord
+bysort hh_id_obs: egen first_wave = min(first_coord_wave)
+bysort hh_id_obs: egen lat = max(cond(wave == first_wave, lat_modified, .))
+bysort hh_id_obs: egen lon = max(cond(wave == first_wave, lon_modified, .))
+
+drop has_coord first_coord_wave first_wave
+drop lat_modified lon_modified
+
+reshape wide cons hh_size, i(hh_id_obs) j(wave)
+
+export excel using "wide_cons_w1_w7.xlsx", firstrow(variables) replace
