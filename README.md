@@ -1,7 +1,7 @@
 # Banking on Biodiversity
 
 This repository contains code produced during research-assistant work on the
-project "Banking on Biodiversity". The code builds survey and spatial data
+project "Banking on Biodiversity" and specifically researcher Stefano Tarroni (https://www.stefanotarroni.com). The code builds survey and spatial data
 inputs for analysis of community seed banks, candidate villages, household
 panels, agricultural outcomes, and environmental covariates in Uganda.
 
